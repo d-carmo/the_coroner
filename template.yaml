@@ -1,0 +1,31 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Transform: AWS::Serverless-2016-10-31
+Description: the_coroner - Slack slash command Lambda
+
+Globals:
+  Function:
+    Timeout: 60
+    Runtime: nodejs20.x
+
+Resources:
+  PostmortemFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      FunctionName: the_coroner
+      Handler: dist/handlers/postmortemHandler.handler
+      CodeUri: .
+      MemorySize: 1024
+      Environment:
+        Variables:
+          TEST_MODE: '1'
+          SLACK_BOT_TOKEN: placeholder
+          SLACK_SIGNING_SECRET: placeholder
+          NOTION_API_KEY: placeholder
+          NOTION_INCIDENTS_PARENT_ID: placeholder
+          CLAUDE_API_KEY: placeholder
+      Events:
+        Api:
+          Type: Api
+          Properties:
+            Path: /generate-postmortem
+            Method: ANY
