@@ -34,7 +34,6 @@ export async function fetchChannelMessages(
   }
 
   const token = await getSlackBotToken();
-  console.log('Token:', token?.substring(0, 8), 'starts xoxb-:', token?.startsWith('xoxb-'));
   
   let response;
   for (let i = 0; i < 5; i++) {

@@ -15,17 +15,41 @@ Resources:
       Handler: dist/handlers/postmortemHandler.handler
       CodeUri: .
       MemorySize: 1024
+      Policies:
+        - SSMParameterReadPolicy:
+            ParameterName: "/notion-pm/*"
       Environment:
         Variables:
-          TEST_MODE: '1'
-          SLACK_BOT_TOKEN: placeholder
-          SLACK_SIGNING_SECRET: placeholder
-          NOTION_API_KEY: placeholder
-          NOTION_INCIDENTS_PARENT_ID: placeholder
-          CLAUDE_API_KEY: placeholder
+          SLACK_BOT_TOKEN: !Ref SlackBotTokenParam
+          SLACK_SIGNING_SECRET: !Ref SlackSigningSecretParam
+          NOTION_API_KEY: !Ref NotionApiKeyParam
+          NOTION_INCIDENTS_PARENT_ID: !Ref NotionIncidentsParentIdParam
+          CLAUDE_API_KEY: !Ref ClaudeApiKeyParam
+          CLAUDE_MAX_TOKENS: !Ref ClaudeMaxTokensParam
+          AWS_REGION: !Ref AWS::Region
       Events:
         Api:
           Type: Api
           Properties:
             Path: /generate-postmortem
             Method: ANY
+
+Parameters:
+  SlackBotTokenParam:
+    Type: AWS::SSM::Parameter::Value<String>
+    Default: /notion-pm/slack-bot-token
+  SlackSigningSecretParam:
+    Type: AWS::SSM::Parameter::Value<String>
+    Default: /notion-pm/slack-signing-secret
+  NotionApiKeyParam:
+    Type: AWS::SSM::Parameter::Value<String>
+    Default: /notion-pm/notion-api-key
+  NotionIncidentsParentIdParam:
+    Type: AWS::SSM::Parameter::Value<String>
+    Default: /notion-pm/notion-incidents-parent-id
+  ClaudeApiKeyParam:
+    Type: AWS::SSM::Parameter::Value<String>
+    Default: /notion-pm/claude-api-key
+  ClaudeMaxTokensParam:
+    Type: AWS::SSM::Parameter::Value<String>
+    Default: /notion-pm/claude-max-tokens

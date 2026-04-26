@@ -2,6 +2,7 @@ import { IncidentContext, IncidentPostmortem } from '../types';
 import { getParam } from '../utils/ssmClient';
 
 const CLAUDE_API_URL = 'https://api.anthropic.com/v1/messages';
+const DEFAULT_CLAUDE_MAX_TOKENS = 4000;
 
 let claudeApiKey: string | null = null;
 
@@ -60,6 +61,13 @@ Guidelines:
 - If no information is available for a section, use an empty array or placeholder
 `;
 
+function getClaudeMaxTokens(): number {
+  const parsed = Number(process.env.CLAUDE_MAX_TOKENS);
+  return Number.isFinite(parsed) && parsed > 0
+    ? Math.floor(parsed)
+    : DEFAULT_CLAUDE_MAX_TOKENS;
+}
+
 export async function generatePostmortem(
   context: IncidentContext
 ): Promise<IncidentPostmortem> {
@@ -76,7 +84,7 @@ export async function generatePostmortem(
     },
     body: JSON.stringify({
       model: 'claude-sonnet-4-6',
-      max_tokens: 4000,
+      max_tokens: getClaudeMaxTokens(),
       system: SYSTEM_PROMPT,
       messages: [
         {

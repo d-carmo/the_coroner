@@ -2,194 +2,147 @@
 
 ## Overview
 
-This system automatically generates structured postmortem documents in Notion from Slack incident channels. When invoked via a Slack slash command in an incident channel, it gathers all channel discussions and linked video call transcriptions, processes them through Claude AI, and creates a formatted Notion page.
+This system generates structured incident postmortems in Notion from Slack incident channels.
+A Slack slash command triggers an AWS Lambda function that fetches channel history, extracts transcription links, calls Claude AI, and creates a Notion page.
 
 ## Data Flow
 
 ```
-┌──────────────────────────────────────────────────────────────────────────────┐
-│                              SLACK WORKSPACE                                 │
-│  /generate-postmortem                                                         │
-│  (Slash command invoked in incident channel)                                  │
-└──────────────┬───────────────────────────────────────────────────────────────┘
-               │
-               ▼
-┌──────────────────────────────────────────────────────────────────────────────┐
-│                          AWS API GATEWAY                                     │
-│  POST /generate-postmortem                                                    │
-│  Request body: { channel_id, slack_token, user_id }                          │
-└──────────────┬───────────────────────────────────────────────────────────────┘
-               │
-               ▼
-┌──────────────────────────────────────────────────────────────────────────────┐
-│                          AWS LAMBDA                                          │
-│                                                                               │
-│  Step 1: Fetch channel messages via Slack API                                │
-│  Step 2: Extract video call transcription links (Zoom, Google Meet, etc.)    │
-│  Step 3: Build unified context payload                                      │
-│  Step 4: Call Claude API → structured incident JSON                         │
-│  Step 5: Create Notion page under "incidents" parent                        │
-│  Step 6: Send Notion page URL to Slack as ephemeral message                  │
-│                                                                               │
-└──────────────┬───────────────────────────────────────────────────────────────┘
-               │
-               ▼
-┌──────────────────────────────────────────────────────────────────────────────┐
-│                          NOTION                                              │
-│  Parent: Incidents page/database                                             │
-│  Child page: YY_MM_DD-Incident-<affected-stack>                              │
-└──────────────────────────────────────────────────────────────────────────────┘
+Slack Incident Channel
+  /generate-postmortem
+        ↓
+API Gateway
+        ↓
+AWS Lambda: postmortemHandler
+        ↓
+Slack API -> fetch channel messages
+        ↓
+Transcription extraction
+        ↓
+Claude API -> structured JSON
+        ↓
+Notion API -> create page
+        ↓
+Slack API -> send ephemeral reply
 ```
 
-## Component Details
+## Components
 
-### 1. Slack Slash Command
+### Slack Slash Command
 
-- **Command**: `/generate-postmortem`
-- **Scope**: Must be invoked within an incident channel
-- **Behavior**: Triggers immediately upon invocation; Lambda handles async processing
-- **Response**: Ephemeral Slack message containing the Notion page link
+- Command: `/generate-postmortem`
+- Must be invoked inside an incident channel
+- Request URL: API Gateway endpoint
+- Validated via Slack signature verification in `src/utils/slackVerification.ts`
 
-### 2. AWS API Gateway
+### AWS API Gateway
 
-- **Endpoint**: `POST /generate-postmortem`
-- **Auth**: Slack request signature verification
-- **Rate limiting**: Per-user, per-channel limits to prevent spam
+- Exposes `POST /generate-postmortem`
+- Routes requests to the Lambda function
+- Current deployment uses Lambda-side Slack verification rather than API Gateway authorizers
 
-### 3. AWS Lambda Function
+### AWS Lambda Function
 
-The Lambda orchestrates the entire pipeline:
+Defined in `template.yaml` as `PostmortemFunction`:
 
-#### Step 1: Fetch Slack Messages
-```
-- conversations.history API
-- Include threaded replies
-- Date range: entire channel history (or configurable lookback)
-- Capture: text, timestamps, users, reactions, thread replies
-```
+- Runtime: `nodejs20.x`
+- Timeout: `60` seconds
+- Memory: `1024` MB
+- Handler: `dist/handlers/postmortemHandler.handler`
 
-#### Step 2: Extract Transcription Links
-```
-- Parse message content for known video call domains:
-  - Zoom
-  - Google Meet
-  - Loom
-  - Otter.ai
-  - Other configurable providers
-- Fetch transcription content if accessible
-```
+Lambda responsibilities:
 
-#### Step 3: Build Context Payload
-```
-{
-  "channel_name": "inc-2024-04-15-payment-outage",
-  "messages": [...],
-  "transcriptions": [...],
-  "start_time": "ISO-8601",
-  "end_time": "ISO-8601"
-}
-```
+1. Validate Slack signature and timestamp
+2. Parse the incoming slash command payload
+3. Fetch Slack channel messages via `conversations.history`
+4. Extract transcription links from message text
+5. Fetch transcript content when possible
+6. Build a context payload for Claude
+7. Call Claude and parse the JSON response
+8. Create a Notion page under the configured parent page
+9. Send an ephemeral Slack response to the user
 
-#### Step 4: Claude API Integration
-```
-- Model: Claude ( Opus or Sonnet )
-- System prompt: Structured postmortem generation instructions
-- Output format: JSON with defined schema
-```
+### Claude Integration
 
-#### Step 5: Notion Page Creation
-```
-- Parent: Pre-configured "incidents" page/database
-- Page title: YY_MM_DD-Incident-<affected-stack>
-- Content: Structured blocks based on Claude output
-```
+- Endpoint: `https://api.anthropic.com/v1/messages`
+- API key provided by `CLAUDE_API_KEY`
+- `CLAUDE_MAX_TOKENS` controls the max tokens sent to Claude
+- System prompt enforces a structured JSON postmortem format
 
-#### Step 6: Slack Notification
-```
-- Ephemeral message (visible only to invoking user)
-- Contains Notion page URL
-- Includes brief summary of what was generated
-```
+### Notion Integration
 
-## Notion Page Structure
+- Uses the Notion Pages API
+- Creates a page under the configured parent page ID
+- Writes blocks for summary, timeline, findings, fixes, and action items
 
-Generated pages follow this schema:
+## Configuration
 
-```
-YY_MM_DD-Incident-<affected-stack>
-│
-├── Summary
-│   └── Brief description of the incident
-│
-├── Timeline
-│   └── Chronological sequence of events
-│
-├── Sequence of Events
-│   └── Detailed step-by-step progression
-│
-├── Discoveries & Actions
-│   └── Key findings and immediate responses
-│
-├── Findings
-│   └── Root cause analysis and contributing factors
-│
-├── Fixes
-│   └── Implemented solutions and workarounds
-│
-└── Action Items
-    └── Follow-up tasks with assignees
-```
+The SAM template references AWS Systems Manager Parameter Store parameters:
 
-## Page Naming Convention
+- `/notion-pm/slack-bot-token` (SecureString)
+- `/notion-pm/slack-signing-secret` (SecureString)
+- `/notion-pm/notion-api-key` (SecureString)
+- `/notion-pm/notion-incidents-parent-id` (String)
+- `/notion-pm/claude-api-key` (SecureString)
+- `/notion-pm/claude-max-tokens` (String, optional)
 
-Format: `YY_MM_DD-Incident-<affected-stack>`
+The Lambda function uses `src/utils/ssmClient.ts` to retrieve these parameters securely at runtime.
 
-Examples:
-- `24_04_15-Incident-payments-service`
-- `24_03_22-Incident-authentication`
-- `24_05_01-Incident-database-replication`
+## Notion Page Output
 
-Where `<affected-stack>` is determined from the incident context (Claude extracts this from the Slack discussions).
+Each generated page is named with:
 
-## Technology Stack
+`YY_MM_DD-Incident-<affected-stack>`
 
-| Component | Technology |
-|-----------|------------|
-| Slack Integration | Slack API + Slash Commands |
-| API Layer | AWS API Gateway |
-| Compute | AWS Lambda (Node.js or Python) |
-| AI Processing | Claude API (Anthropic) |
-| Documentation | Notion API |
-| Infrastructure | AWS (SAM or CDK) |
+And contains these sections:
 
-## Security Considerations
+- Summary
+- Timeline
+- Sequence of Events
+- Discoveries & Actions
+- Findings
+- Fixes
+- Action Items
 
-1. **Slack Verification**: Validate request signatures from Slack
-2. **Secret Management**: Store tokens (Slack, Notion, Claude) in AWS Secrets Manager or Parameter Store
-3. **IAM Roles**: Lambda uses minimal required permissions
-4. **Network**: Optionally use VPC for Notion API calls
+## Security Notes
 
-## Error Handling
+- Slack request signatures are verified using HMAC-SHA256
+- Secrets are stored in AWS Systems Manager Parameter Store with encryption
+- The Lambda function retrieves parameters securely at runtime using AWS SDK
+- For production, consider using AWS Secrets Manager for more advanced secret management features
 
-| Scenario | Behavior |
-|----------|----------|
-| Invalid Slack signature | Return 401, no processing |
-| Channel not found | Return 404 with message |
-| No messages found | Return 400 with helpful error |
-| Claude API failure | Retry with backoff, then return 500 |
-| Notion API failure | Retry with backoff, then return 500 |
-| Partial failure | Log state, return 500 with error details |
+## Limitations
 
-## Environment Variables
+- Transcript extraction is URL-based and generic
+- The implementation uses AWS Systems Manager Parameter Store for secret management
+- API Gateway has no extra request authorization beyond Slack signature validation
+- Production deployment should add stronger logging, monitoring, and rate limiting
 
-```
-SLACK_BOT_TOKEN=<xoxb-...>
-SLACK_SIGNING_SECRET=<signing secret>
-NOTION_API_KEY=<secret-...>
-NOTION_INCIDENTS_PARENT_ID=<page ID>
-CLAUDE_API_KEY=<sk-ant-...>
-AWS_LAMBDA_FUNCTION_NAME=<function name>
+## Deployment
+
+The SAM template defines a single Lambda-backed API.
+Deploy with:
+
+```bash
+npm run build
+sam deploy --guided
 ```
 
-## Future Enhancements
+Set the Lambda environment variables during deployment or replace the placeholders in `template.yaml`.
 
+## Implementation details
+
+- Handler: `src/handlers/postmortemHandler.ts`
+- Service orchestration: `src/services/postmortemService.ts`
+- Slack client: `src/clients/slackClient.ts`
+- Claude client: `src/clients/claudeClient.ts`
+- Notion client: `src/clients/notionClient.ts`
+- Transcription extraction: `src/utils/extractTranscriptions.ts`
+- Secret mapping: `src/utils/ssmClient.ts`
+
+## Future enhancements
+
+- Add direct Google Docs / Gemini transcript integration
+- Add Fireflies or other transcript provider API support
+- Add stronger API Gateway authorization
+- Add transcript summarization before sending to Claude

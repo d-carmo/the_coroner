@@ -43,16 +43,12 @@ export async function handler(
     const signature = event.headers['x-slack-signature'] || '';
 
     const isValid = await verifySlackSignature(body, timestamp, signature);
-    console.log('Signature valid:', isValid, 'TEST_MODE:', process.env.TEST_MODE);
+    console.log('Signature valid:', isValid);
     if (!isValid) {
-      if (process.env.TEST_MODE === '1') {
-        console.log('Test mode - bypassing signature');
-      } else {
-        return {
-          statusCode: 401,
-          body: JSON.stringify({ error: 'Invalid signature', ts: timestamp }),
-        };
-      }
+      return {
+        statusCode: 401,
+        body: JSON.stringify({ error: 'Invalid signature', ts: timestamp }),
+      };
     }
 
     const payload = parseFormData(body) as unknown as SlackSlashCommandPayload;
